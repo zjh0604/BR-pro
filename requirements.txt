@@ -1,0 +1,73 @@
+# FastAPI and related
+fastapi>=0.104.1
+uvicorn[standard]>=0.24.0
+pydantic>=2.5.0
+
+# Database
+sqlalchemy>=2.0.23
+
+# Vector Database - Milvus
+pymilvus>=2.3.0
+# chromadb>=0.4.22  # Disabled
+
+# Machine Learning - Vector only, no large transformers
+sentence-transformers>=2.2.2
+# torch>=2.1.0  # Enable if using GPU/large models
+# transformers>=4.35.0  # Not needed
+
+# Graph Database - Temporarily disabled
+# neo4j>=5.14.0
+
+# Redis
+redis>=5.0.1
+
+# Celery
+celery>=5.3.4
+flower>=2.0.1
+
+# HTTP requests
+requests>=2.31.0
+httpx>=0.25.2
+
+# Logging
+loguru>=0.7.2
+
+# Utilities
+python-multipart>=0.0.6
+python-jose[cryptography]>=3.3.0
+passlib[bcrypt]>=1.7.4
+python-dotenv>=1.0.0
+
+# Monitoring
+prometheus-client>=0.19.0
+
+# Development
+pytest>=7.4.3
+pytest-asyncio>=0.21.1
+
+# AI/LLM - Qianfan for ranking (已移除LLM功能)
+# qianfan>=0.1.0
+# langchain-community>=0.0.20
+
+# Data processing
+numpy>=1.24.0
+pandas>=2.1.0
+
+# Security
+cryptography>=41.0.0
+
+# Async support
+aiofiles>=23.2.1
+
+# JSON handling
+orjson>=3.9.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Code formatting
+black>=23.11.0
+isort>=5.12.0
+
+# Linting
+flake8>=6.1.0
