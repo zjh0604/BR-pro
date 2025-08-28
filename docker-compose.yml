@@ -1,0 +1,262 @@
+version: '3.8'
+
+services:
+  # Milvus 向量数据库
+  etcd:
+    container_name: milvus-etcd
+    image: quay.io/coreos/etcd:v3.5.5
+    environment:
+      - ETCD_AUTO_COMPACTION_MODE=revision
+      - ETCD_AUTO_COMPACTION_RETENTION=1000
+      - ETCD_QUOTA_BACKEND_BYTES=4294967296
+      - ETCD_SNAPSHOT_COUNT=50000
+    volumes:
+      - etcd_data:/etcd
+    command: etcd -advertise-client-urls=http://127.0.0.1:2379 -listen-client-urls http://0.0.0.0:2379 --data-dir /etcd
+
+  minio:
+    container_name: milvus-minio
+    image: minio/minio:RELEASE.2023-03-20T20-16-18Z
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    volumes:
+      - minio_data:/minio_data
+    command: minio server /minio_data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  milvus:
+    container_name: milvus-standalone
+    image: milvusdb/milvus:v2.3.3
+    command: ["milvus", "run", "standalone"]
+    environment:
+      ETCD_ENDPOINTS: etcd:2379
+      MINIO_ADDRESS: minio:9000
+    volumes:
+      - milvus_data:/var/lib/milvus
+    ports:
+      - "19530:19530"
+      - "9091:9091"
+    depends_on:
+      - "etcd"
+      - "minio"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9091/healthz"]
+      interval: 30s
+      timeout: 20s
+      retries: 3
+
+  # Neo4j 图数据库（临时停用）
+  # neo4j:
+  #   image: neo4j:4.4.28
+  #   container_name: business-neo4j
+  #   environment:
+  #     - NEO4J_AUTH=neo4j/password
+  #     - NEO4J_dbms_memory_heap_initial_size=512m
+  #     - NEO4J_dbms_memory_heap_max_size=1G
+  #   ports:
+  #     - "7474:7474"
+  #     - "7687:7687"
+  #   volumes:
+  #     - neo4j_data:/data
+  #     - neo4j_logs:/logs
+  #     - neo4j_import:/var/lib/neo4j/import
+  #     - neo4j_plugins:/plugins
+  #   networks:
+  #     - business-net
+  #   restart: unless-stopped
+  #   healthcheck:
+  #     test: ["CMD", "cypher-shell", "-u", "neo4j", "-p", "password", "RETURN 1"]
+  #     interval: 30s
+  #     timeout: 10s
+  #     retries: 5
+
+  # API 服务
+  api:
+    image: registry.cn-hangzhou.aliyuncs.com/sohuglobal/businessrec:v2.0.0
+    container_name: business-api
+    ports:
+      - "8000:8000"
+    environment:
+      # 后端Redis配置（共享后端Redis）
+      - BACKEND_REDIS_HOST=backend-server
+      - BACKEND_REDIS_PORT=6379
+      - BACKEND_REDIS_DB=10
+      - BACKEND_REDIS_PASSWORD=${BACKEND_REDIS_PASSWORD}
+      
+      # Milvus配置
+      - MILVUS_HOST=milvus
+      - MILVUS_PORT=19530
+      
+      # Neo4j配置（停用）
+      # - NEO4J_URI=bolt://neo4j:7687
+      # - NEO4J_USER=neo4j
+      # - NEO4J_PASSWORD=password
+      
+      # 后端API配置
+      - BACKEND_API_URL=http://backend-server/api
+      - BACKEND_API_TIMEOUT=30
+      
+      # 千帆API配置（停用）
+      # - QIANFAN_AK=${QIANFAN_AK}
+      # - QIANFAN_SK=${QIANFAN_SK}
+      
+      # 其他配置
+      - AES_KEY=${AES_KEY}
+      - HMAC_KEY=${HMAC_KEY}
+    volumes:
+      - ./logs:/app/logs
+      - ./cache:/app/cache
+    depends_on:
+      milvus:
+        condition: service_healthy
+      # neo4j:
+      #   condition: service_healthy
+    networks:
+      - business-net
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+
+  # Celery Worker - LLM分析队列（停用LLM增强，保留Worker结构以兼容）
+  celery-llm-worker:
+    image: registry.cn-hangzhou.aliyuncs.com/sohuglobal/businessrec:v2.0.0
+    container_name: business-celery-llm-worker
+    command: >
+      celery -A celery_app worker 
+      -l info 
+      -c 2
+      -Q llm_analysis,default
+      --max-tasks-per-child=50
+      --prefetch-multiplier=2
+      --logfile=/app/logs/celery_llm_worker.log
+    environment:
+      - BACKEND_REDIS_HOST=backend-server
+      - BACKEND_REDIS_PORT=6379
+      - BACKEND_REDIS_DB=10
+      - BACKEND_REDIS_PASSWORD=${BACKEND_REDIS_PASSWORD}
+      - MILVUS_HOST=milvus
+      - MILVUS_PORT=19530
+      # - NEO4J_URI=bolt://neo4j:7687
+      # - NEO4J_USER=neo4j
+      # - NEO4J_PASSWORD=password
+      - BACKEND_API_URL=http://backend-server/api
+      - BACKEND_API_TIMEOUT=30
+      # - QIANFAN_AK=${QIANFAN_AK}
+      # - QIANFAN_SK=${QIANFAN_SK}
+    volumes:
+      - ./logs:/app/logs
+      - ./cache:/app/cache
+    depends_on:
+      milvus:
+        condition: service_healthy
+      # neo4j:
+      #   condition: service_healthy
+    networks:
+      - business-net
+    restart: unless-stopped
+
+  # Celery Worker - 同步队列
+  celery-sync-worker:
+    image: registry.cn-hangzhou.aliyuncs.com/sohuglobal/businessrec:v2.0.0
+    container_name: business-celery-sync-worker
+    command: >
+      celery -A celery_app worker 
+      -l info 
+      -c 1
+      -Q sync_tasks,default
+      --max-tasks-per-child=20
+      --prefetch-multiplier=1
+      --logfile=/app/logs/celery_sync_worker.log
+    environment:
+      - BACKEND_REDIS_HOST=backend-server
+      - BACKEND_REDIS_PORT=6379
+      - BACKEND_REDIS_DB=10
+      - BACKEND_REDIS_PASSWORD=${BACKEND_REDIS_PASSWORD}
+      - MILVUS_HOST=milvus
+      - MILVUS_PORT=19530
+      # - NEO4J_URI=bolt://neo4j:7687
+      # - NEO4J_USER=neo4j
+      # - NEO4J_PASSWORD=password
+      - BACKEND_API_URL=http://backend-server/api
+      - BACKEND_API_TIMEOUT=30
+    volumes:
+      - ./logs:/app/logs
+      - ./cache:/app/cache
+    depends_on:
+      milvus:
+        condition: service_healthy
+      # neo4j:
+      #   condition: service_healthy
+    networks:
+      - business-net
+    restart: unless-stopped
+
+  # Celery Beat - 定时任务调度器
+  celery-beat:
+    image: registry.cn-hangzhou.aliyuncs.com/sohuglobal/businessrec:v2.0.0
+    container_name: business-celery-beat
+    command: >
+      celery -A celery_app beat 
+      -l info 
+      --logfile=/app/logs/celery_beat.log
+    environment:
+      - BACKEND_REDIS_HOST=backend-server
+      - BACKEND_REDIS_PORT=6379
+      - BACKEND_REDIS_DB=10
+      - BACKEND_REDIS_PASSWORD=${BACKEND_REDIS_PASSWORD}
+      - MILVUS_HOST=milvus
+      - MILVUS_PORT=19530
+      - BACKEND_API_URL=http://backend-server/api
+      - BACKEND_API_TIMEOUT=30
+    volumes:
+      - ./logs:/app/logs
+      - ./cache:/app/cache
+    depends_on:
+      milvus:
+        condition: service_healthy
+      # neo4j:
+      #   condition: service_healthy
+    networks:
+      - business-net
+    restart: unless-stopped
+
+  # Flower - Celery监控
+  flower:
+    image: registry.cn-hangzhou.aliyuncs.com/sohuglobal/businessrec:v2.0.0
+    container_name: business-flower
+    command: >
+      celery -A celery_app flower 
+      --port=5555 
+      --broker=redis://backend-server:6379/10
+      --broker_api=redis://backend-server:6379/10
+    environment:
+      - BACKEND_REDIS_HOST=backend-server
+      - BACKEND_REDIS_PORT=6379
+      - BACKEND_REDIS_DB=10
+      - BACKEND_REDIS_PASSWORD=${BACKEND_REDIS_PASSWORD}
+    ports:
+      - "5555:5555"
+    networks:
+      - business-net
+    restart: unless-stopped
+
+volumes:
+  etcd_data:
+  minio_data:
+  milvus_data:
+  # neo4j_data:
+  # neo4j_logs:
+  # neo4j_import:
+  # neo4j_plugins:
+
+networks:
+  business-net:
+    driver: bridge
