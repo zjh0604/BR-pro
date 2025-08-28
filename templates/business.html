@@ -1,0 +1,207 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>商单管理 - 商单推荐系统</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/css/bootstrap.min.css" rel="stylesheet">
+    <style>
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .header {
+            text-align: center;
+            margin-bottom: 40px;
+        }
+        .card {
+            margin-bottom: 20px;
+            box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+        }
+        .order-section {
+            margin-top: 30px;
+        }
+        .order-card {
+            border: 1px solid #ddd;
+            padding: 15px;
+            margin-bottom: 20px;
+            border-radius: 8px;
+            background-color: #fff;
+        }
+        .order-card.recommended {
+            border-left: 4px solid #28a745;
+        }
+        .loading {
+            display: none;
+            text-align: center;
+            margin: 20px 0;
+        }
+        .toast {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            z-index: 1050;
+        }
+        .section-title {
+            margin-bottom: 20px;
+            padding-bottom: 10px;
+            border-bottom: 2px solid #eee;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>商单管理</h1>
+            <p class="lead">智能匹配商单，助力业务发展</p>
+        </div>
+
+        <div class="row">
+            <div class="col-md-6 offset-md-3">
+                <div class="card">
+                    <div class="card-body">
+                        <h5 class="card-title">商单推荐</h5>
+                        <form id="recommendForm">
+                            <div class="mb-3">
+                                <label for="userId" class="form-label">选择用户ID</label>
+                                <select class="form-select" id="userId" required>
+                                    <option value="">请选择用户ID</option>
+                                </select>
+                            </div>
+                            <button type="submit" class="btn btn-primary w-100">获取推荐</button>
+                        </form>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div class="loading">
+            <div class="spinner-border text-primary" role="status">
+                <span class="visually-hidden">Loading...</span>
+            </div>
+            <p class="mt-2">正在分析中，请稍候...</p>
+        </div>
+
+        <div id="results" style="display: none;">
+            <!-- 用户商单 -->
+            <div class="order-section">
+                <h2 class="section-title">用户商单</h2>
+                <div id="userOrders"></div>
+            </div>
+
+            <!-- 推荐商单 -->
+            <div class="order-section">
+                <h2 class="section-title">推荐商单</h2>
+                <div id="recommendedOrders"></div>
+            </div>
+        </div>
+    </div>
+
+    <div class="toast-container"></div>
+
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.1.3/dist/js/bootstrap.bundle.min.js"></script>
+    <script>
+        document.getElementById('recommendForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const userId = document.getElementById('userId').value;
+            if (!userId) {
+                showToast('请选择用户ID');
+                return;
+            }
+
+            const loading = document.querySelector('.loading');
+            const results = document.getElementById('results');
+            
+            loading.style.display = 'block';
+            results.style.display = 'none';
+
+            try {
+                const response = await fetch(`/api/business/orders/${userId}`);
+                const data = await response.json();
+                
+                if (data.success) {
+                    displayOrders(data.user_orders, data.recommended_orders);
+                    results.style.display = 'block';
+                } else {
+                    showToast(data.error || '获取推荐失败');
+                }
+            } catch (error) {
+                console.error('Error:', error);
+                showToast('请求失败，请重试');
+            } finally {
+                loading.style.display = 'none';
+            }
+        });
+
+        function displayOrders(userOrders, recommendedOrders) {
+            // 显示用户商单
+            const userOrdersContainer = document.getElementById('userOrders');
+            userOrdersContainer.innerHTML = userOrders.map(order => createOrderCard(order, false)).join('');
+
+            // 显示推荐商单
+            const recommendedOrdersContainer = document.getElementById('recommendedOrders');
+            if (recommendedOrders.length === 0) {
+                recommendedOrdersContainer.innerHTML = '<div class="alert alert-info">暂无推荐商单</div>';
+            } else {
+                recommendedOrdersContainer.innerHTML = recommendedOrders.map(order => createOrderCard(order, true)).join('');
+            }
+        }
+
+        function createOrderCard(order, isRecommended) {
+            return `
+                <div class="order-card ${isRecommended ? 'recommended' : ''}">
+                    <h4>${order.wish_title}</h4>
+                    <p><strong>用户ID:</strong> ${order.user_id}</p>
+                    <p><strong>对应角色:</strong> ${order.corresponding_role}</p>
+                    <p><strong>愿望分类:</strong> ${order.classification}</p>
+                    <p><strong>愿望详情:</strong> ${order.wish_details}</p>
+                </div>
+            `;
+        }
+
+        function showToast(message) {
+            const toast = document.createElement('div');
+            toast.className = 'toast';
+            toast.setAttribute('role', 'alert');
+            toast.setAttribute('aria-live', 'assertive');
+            toast.setAttribute('aria-atomic', 'true');
+            
+            toast.innerHTML = `
+                <div class="toast-header">
+                    <strong class="me-auto">提示</strong>
+                    <button type="button" class="btn-close" data-bs-dismiss="toast" aria-label="Close"></button>
+                </div>
+                <div class="toast-body">${message}</div>
+            `;
+            
+            document.querySelector('.toast-container').appendChild(toast);
+            const bsToast = new bootstrap.Toast(toast);
+            bsToast.show();
+            
+            toast.addEventListener('hidden.bs.toast', function() {
+                toast.remove();
+            });
+        }
+
+        window.addEventListener('DOMContentLoaded', async function() {
+            const userIdSelect = document.getElementById('userId');
+            try {
+                const response = await fetch('/api/business/user_ids_from_json');
+                const data = await response.json();
+                if (data.success) {
+                    data.user_ids.forEach(uid => {
+                        const option = document.createElement('option');
+                        option.value = uid;
+                        option.textContent = uid;
+                        userIdSelect.appendChild(option);
+                    });
+                }
+            } catch (e) {
+                // 可选：显示错误提示
+            }
+        });
+    </script>
+</body>
+</html> 
